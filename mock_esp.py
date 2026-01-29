@@ -93,7 +93,11 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Mock ESP Device")
     parser.add_argument("--device-id", type=str, default="desk_light_1", help="Device ID for this emulator")
+    parser.add_argument("--uri", type=str, default="ws://localhost:8000/ws", help="WebSocket URI to connect to")
     args = parser.parse_args()
+
+    # Update global URI if provided (a bit hacky but works for this script structure)
+    URI = args.uri
 
     try:
         asyncio.run(run_mock_device(args.device_id))

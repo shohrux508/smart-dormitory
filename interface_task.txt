@@ -1,0 +1,104 @@
+SMART-DORMITORY — Telegram Bot Interface Task
+=============================================
+
+Context
+-------
+SMART-DORMITORY is a desk light control system for a dormitory.
+The backend server is implemented with FastAPI and is the SINGLE source of truth (Server Authority).
+
+The Telegram bot is a client-side interface.
+It must not store device state, make logical decisions, or replace server behavior.
+
+Server documentation:
+- README.md (in the repository)
+- Backend is already implemented and stable (MVP v2)
+
+Goal
+----
+Implement a Telegram bot that provides a user interface for controlling devices
+via the existing HTTP API of the server.
+
+The bot:
+- displays data received from the server
+- sends control commands to the server
+- does NOT store device state locally
+- does NOT attempt to "guess" state in case of errors
+
+Technical Requirements
+----------------------
+- Language: Python 3.11+
+- Framework: aiogram (async)
+- Architecture: asynchronous
+- No database
+- No caching of device states
+- All device state must be fetched ONLY from the server
+
+Allowed:
+- UI/UX implementation (menus, buttons, messages)
+- API requests to the server
+- Proper error handling and user feedback
+
+Forbidden:
+- Local storage of device state
+- FSM or client-side device logic
+- Decision-making instead of the server
+- Any modification of server API or behavior
+
+Available API Endpoints
+-----------------------
+GET  /api/devices
+- Retrieve list of devices
+
+GET  /api/devices/{id}
+- Retrieve current device state (ON / OFF)
+
+POST /api/devices/{id}/turn_on
+- Send command to turn light ON
+
+POST /api/devices/{id}/turn_off
+- Send command to turn light OFF
+
+Functional Requirements
+-----------------------
+1. Main Menu
+   - "Devices" button
+   - (optional) "Refresh" button
+
+2. Devices List
+   - Retrieved via GET /api/devices
+   - For each device display:
+     - Device ID
+     - Current status (ON / OFF / unavailable)
+
+3. Device Screen
+   - Fetch state via GET /api/devices/{id}
+   - Display current state
+   - Buttons:
+     - Turn ON
+     - Turn OFF
+     - Refresh status
+
+4. Error Handling
+   - If server is unavailable → show error message
+   - If request fails → display error response
+   - UI must NOT change unless server confirms the action
+
+Failure Behavior
+----------------
+- If the server does not respond:
+  - Notify the user
+  - Do NOT assume device state
+- If a command fails:
+  - Device state is considered unknown until next successful request
+
+Deliverables
+------------
+- Git repository with Telegram bot source code
+- README with setup and run instructions
+- Clean, readable, well-structured code
+
+Important
+---------
+The Telegram bot is an interface only.
+All logic and authority belong to the server.
+Any violation of this principle is considered an architectural error.
