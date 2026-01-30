@@ -1,4 +1,5 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi.staticfiles import StaticFiles
 from typing import Optional, Dict, List
 import asyncio
 from datetime import datetime
@@ -31,13 +32,15 @@ async def startup_event():
     asyncio.create_task(manager.run_heartbeat())
 
 
-@app.get("/")
+@app.get("/api/info")
 async def root():
     """Проверка работы сервера."""
     return {
         "service": "Smart Dormitory Desk Light API",
         "devices_connected": len(manager.list_devices())
     }
+
+# StaticFiles mount moved to end of file to avoid shadowing API routes
 
 
 # --- WebSocket ---
@@ -174,3 +177,8 @@ async def update_device_settings(
     
     db.commit()
     return {"status": "updated", "name": settings.name, "room": settings.room}
+
+# --- Static Files (Dashboard) ---
+# Mount static files at the root. 
+# CRITICAL: This must be the LAST route defined to ensure it doesn't shadow API endpoints.
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
