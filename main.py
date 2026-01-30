@@ -53,7 +53,7 @@ async def main():
     async def cmd_id(message: types.Message):
         """Handle /id command: show user ID."""
         await message.reply(f"Ваш ID: {message.chat.id}")
-        
+    
     @dp.message(filters.Command("start"))
     async def cmd_start(message: types.Message):
         """Handle /start command: register user."""
