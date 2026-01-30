@@ -1,135 +1,34 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from typing import Optional, Dict, List
-from datetime import datetime
-from pydantic import BaseModel
 import asyncio
+from datetime import datetime
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+
+# Импорт основных компонентов
+from devices_core import manager, DeviceHello, StateUpdate, Command, Device
+
+# Импорт сервиса Алисы
+from alice_service import router as alice_router
+
+# Импорт БД
+from database import engine, Base, get_db, DeviceMeta, User
 
 app = FastAPI(title="Smart Dormitory Desk Light")
 
-# --- Data Models ---
+# Создаем таблицы при запуске
+Base.metadata.create_all(bind=engine)
 
-class DeviceHello(BaseModel):
-    type: str  # "device_hello"
-    device_id: str
-    state: str = "OFF" # Optional/Ignored by server v3
+# Подключаем роутер Алисы
+app.include_router(alice_router)
 
-class SyncStateMessage(BaseModel):
-    type: str = "sync_state"
-    state: str
-
-class StateUpdate(BaseModel):
-    type: str  # "state_update"
-    device_id: str
-    state: str
-
-class Command(BaseModel):
-    type: str = "command"
-    action: str
-
-# --- Internal Device Model ---
-
-class Device:
-    def __init__(self, device_id: str, state: str = "OFF", status: str = "offline"):
-        self.device_id = device_id
-        self.state = state  # "ON" | "OFF"
-        self.status = status  # "online" | "offline"
-        self.last_seen: float = 0.0
-        self.connection: Optional[WebSocket] = None
-
-# --- Connection Manager ---
-
-class ConnectionManager:
-    def __init__(self):
-        # device_id -> Device
-        self.devices: Dict[str, Device] = {}
-
-    def get_or_create_device(self, device_id: str) -> Device:
-        if device_id not in self.devices:
-            self.devices[device_id] = Device(device_id)
-        return self.devices[device_id]
-
-    async def connect(self, device_id: str, websocket: WebSocket):
-        device = self.get_or_create_device(device_id)
-        
-        # 1. Register Connection
-        device.connection = websocket
-        device.status = "online"
-        device.last_seen = datetime.now().timestamp()
-        
-        # 2. Server Authority: Enforce Server State
-        # We ignore what the device sent in 'hello'.
-        # We use the current state from memory (device.state).
-        
-        print(f"Device connected: {device_id}. Syncing to state: {device.state}")
-        
-        # 3. Send Sync Message
-        sync_msg = SyncStateMessage(state=device.state)
-        await websocket.send_text(sync_msg.model_dump_json())
-
-    def disconnect(self, device_id: str):
-        if device_id in self.devices:
-            device = self.devices[device_id]
-            device.connection = None
-            device.status = "offline"
-            print(f"Device disconnected: {device_id}")
-
-    async def update_state(self, device_id: str, state: str):
-        if device_id in self.devices:
-            self.devices[device_id].state = state
-            self.devices[device_id].last_seen = datetime.now().timestamp()
-            print(f"State updated for {device_id}: {state}")
-
-    def get_connection(self, device_id: str) -> Optional[WebSocket]:
-        if device_id in self.devices:
-            return self.devices[device_id].connection
-        return None
-
-    def get_device(self, device_id: str) -> Optional[Device]:
-        return self.devices.get(device_id)
-        
-    def list_devices(self) -> List[dict]:
-        return [
-            {
-                "device_id": d.device_id,
-                "state": d.state,
-                "status": d.status
-            }
-            for d in self.devices.values()
-        ]
-
-    async def run_heartbeat(self):
-        print("Heartbeat loop started")
-        while True:
-            await asyncio.sleep(5)
-            now = datetime.now().timestamp()
-            # Copy items to avoid modification during iteration if disconnected
-            for device_id, device in list(self.devices.items()):
-                if device.status == "online":
-                    # Check for timeout (15s)
-                    if now - device.last_seen > 15:
-                        print(f"Device {device_id} timed out (Last seen: {now - device.last_seen:.1f}s ago)")
-                        self.disconnect(device_id)
-                        continue
-
-                    if device.connection:
-                        try:
-                            await device.connection.send_json({"type": "ping"})
-                        except Exception as e:
-                            print(f"Failed to ping {device_id}: {e}")
-                            self.disconnect(device_id)
-
-manager = ConnectionManager() # Created before logic using it
 
 # --- Startup ---
 
 @app.on_event("startup")
 async def startup_event():
+    # Запускаем фоновую задачу heartbeat
     asyncio.create_task(manager.run_heartbeat())
-
-# --- In-Memory State (Legacy/Transition) ---
-# Old globals are removed in favor of `manager`. 
-# Existing endpoints will break until Ticket 2/3 fix them. 
-# But to keep file parseable we removed them.
 
 
 @app.get("/")
@@ -140,6 +39,8 @@ async def root():
         "devices_connected": len(manager.list_devices())
     }
 
+
+# --- WebSocket ---
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -152,7 +53,6 @@ async def websocket_endpoint(websocket: WebSocket):
         try:
             hello_data = DeviceHello.model_validate_json(data)
         except Exception:
-            # If not valid JSON or not DeviceHello, close connection
             await websocket.close(code=1008, reason="Invalid Hello Message")
             return
 
@@ -173,10 +73,8 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             try:
-                # Handle Pong
+                # Handle Pong (simple text check or json parse)
                 if '"type": "pong"' in data or '"type":"pong"' in data:
-                     # Simple check to avoid full parse if possible, or we can try parse
-                     # But we need to update last_seen
                      if device_id in manager.devices:
                          manager.devices[device_id].last_seen = datetime.now().timestamp()
                      continue
@@ -187,11 +85,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 else:
                     print(f"Ignored invalid update from {device_id}")
             except Exception as e:
-                # If json is valid but not StateUpdate (maybe Pong json object)
-                # Let's try to see if it was pong via validation error? 
-                # Better: parse as generic dict first
                 print(f"Error processing message from {device_id}: {e}")
-                # We optionally continue or break. Let's continue.
 
     except WebSocketDisconnect:
         if device_id:
@@ -202,10 +96,10 @@ async def websocket_endpoint(websocket: WebSocket):
              manager.disconnect(device_id)
 
 
-# --- HTTP API ---
+# --- HTTP API (Legacy / Direct Control) ---
 
 @app.get("/api/devices")
-async def list_devices():
+async def list_devices_api():
     """Список всех подключенных устройств."""
     return manager.list_devices()
 
@@ -224,46 +118,59 @@ async def get_device_state(device_id: str):
 
 @app.post("/api/devices/{device_id}/turn_on")
 async def turn_device_on(device_id: str):
-    """Включить устройство (Optimistic Update)."""
-    device = manager.get_or_create_device(device_id) 
-    # v3: We can control even never-seen devices if we want, or just known ones.
-    # Specs imply controlling known 'offline' devices.
-    # get_or_create allows pre-provisioning.
-    
-    # 1. Update Server Authority State
-    device.state = "ON"
-    
-    # 2. Try to send if Online
-    if device.status == "online" and device.connection:
-        command = Command(action="TURN_ON")
-        try:
-            await device.connection.send_text(command.model_dump_json())
-            return {"device_id": device_id, "status": "command_sent", "state": "ON"}
-        except Exception as e:
-            print(f"Failed to send command to {device_id}: {e}")
-            manager.disconnect(device_id)
-            # Fallthrough to optimistic response
-            
-    return {"device_id": device_id, "status": "queued_optimistic", "state": "ON"}
+    """Включить устройство."""
+    sent = await manager.send_command(device_id, "TURN_ON")
+    status = "command_sent" if sent else "queued_optimistic"
+    return {"device_id": device_id, "status": status, "state": "ON"}
 
 @app.post("/api/devices/{device_id}/turn_off")
 async def turn_device_off(device_id: str):
-    """Выключить устройство (Optimistic Update)."""
-    device = manager.get_or_create_device(device_id)
-    
-    # 1. Update Server Authority State
-    device.state = "OFF"
-    
-    # 2. Try to send if Online
-    if device.status == "online" and device.connection:
-        command = Command(action="TURN_OFF")
-        try:
-            await device.connection.send_text(command.model_dump_json())
-            return {"device_id": device_id, "status": "command_sent", "state": "OFF"}
-        except Exception as e:
-            print(f"Failed to send command to {device_id}: {e}")
-            manager.disconnect(device_id)
-            # Fallthrough to optimistic response
-            
-    return {"device_id": device_id, "status": "queued_optimistic", "state": "OFF"}
+    """Выключить устройство."""
+    sent = await manager.send_command(device_id, "TURN_OFF")
+    status = "command_sent" if sent else "queued_optimistic"
+    return {"device_id": device_id, "status": status, "state": "OFF"}
 
+# --- Device Settings API ---
+
+class DeviceSettings(BaseModel):
+    name: str
+    room: str
+
+@app.put("/api/devices/{device_id}/settings")
+async def update_device_settings(
+    device_id: str, 
+    settings: DeviceSettings, 
+    db: Session = Depends(get_db)
+):
+    """
+    Установить имя и комнату для устройства (для Алисы).
+    """
+    # Для простоты привязываем к дефолтному юзеру 'shohruh' или первому попавшемуся.
+    # В реальной системе нужно брать user_id из токена админа.
+    # Сейчас мы просто найдем user 'shohruh', если нет - создадим.
+    
+    user = db.query(User).filter(User.username == "shohruh").first()
+    if not user:
+        user = User(username="shohruh")
+        db.add(user)
+        db.commit()
+    
+    meta = db.query(DeviceMeta).filter(
+        DeviceMeta.device_id == device_id,
+        DeviceMeta.user_id == user.id
+    ).first()
+    
+    if not meta:
+        meta = DeviceMeta(
+            device_id=device_id,
+            user_id=user.id,
+            custom_name=settings.name,
+            room=settings.room
+        )
+        db.add(meta)
+    else:
+        meta.custom_name = settings.name
+        meta.room = settings.room
+    
+    db.commit()
+    return {"status": "updated", "name": settings.name, "room": settings.room}

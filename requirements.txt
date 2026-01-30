@@ -3,3 +3,5 @@ uvicorn
 websockets
 pytest
 httpx
+python-multipart
+sqlalchemy

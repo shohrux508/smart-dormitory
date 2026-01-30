@@ -1,8 +1,15 @@
 from fastapi.testclient import TestClient
 from main import app
 import pytest
+from devices_core import manager
 
 client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def clean_manager():
+    # Clean up before each test
+    manager.devices.clear()
+    yield
 
 def test_read_root():
     response = client.get("/")
