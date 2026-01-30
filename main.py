@@ -49,11 +49,16 @@ async def main():
     dp.startup.register(on_startup)
     
     # --- Handlers ---
-
+    @dp.message(filters.Command("id"))
+    async def cmd_id(message: types.Message):
+        """Handle /id command: show user ID."""
+        await message.reply(f"Ваш ID: {message.chat.id}")
+        
     @dp.message(filters.Command("start"))
     async def cmd_start(message: types.Message):
         """Handle /start command: register user."""
         user = message.from_user
+        
         if not user:
             return
         # Register or User Update
