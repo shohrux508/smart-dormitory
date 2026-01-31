@@ -7,13 +7,13 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 # Импорт основных компонентов
-from devices_core import manager, DeviceHello, StateUpdate, Command, Device
+from app.services.devices import manager, DeviceHello, StateUpdate, Command, Device
 
 # Импорт сервиса Алисы
-from alice_service import router as alice_router
+from app.routers.alice import router as alice_router
 
 # Импорт БД
-from database import engine, Base, get_db, DeviceMeta, User
+from app.database import engine, Base, get_db, DeviceMeta, User
 
 app = FastAPI(title="Smart Dormitory Desk Light")
 

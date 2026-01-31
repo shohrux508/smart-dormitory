@@ -4,10 +4,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from main import app
-from database import Base, get_db, DeviceMeta
-from devices_core import manager, Device
-import alice_service
+from app.main import app
+from app.database import Base, get_db, DeviceMeta
+from app.services.devices import manager, Device
+import app.routers.alice as alice_service
 
 # --- Setup In-Memory DB for Tests ---
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"

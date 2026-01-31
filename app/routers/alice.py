@@ -14,9 +14,9 @@ from fastapi.params import Header
 from sqlalchemy.orm import Session
 
 # Импортируем менеджер устройств
-from devices_core import manager
+from app.services.devices import manager
 # Импортируем БД
-from database import get_db, User, AuthCode, Token, DeviceMeta
+from app.database import get_db, User, AuthCode, Token, DeviceMeta
 
 # ==========================================
 # КОНФИГУРАЦИЯ

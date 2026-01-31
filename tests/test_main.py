@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
-from main import app
+from app.main import app
 import pytest
-from devices_core import manager
+from app.services.devices import manager
 
 client = TestClient(app)
 
@@ -12,7 +12,7 @@ def clean_manager():
     yield
 
 def test_read_root():
-    response = client.get("/")
+    response = client.get("/api/info")
     assert response.status_code == 200
     data = response.json()
     assert "service" in data

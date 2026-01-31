@@ -7,13 +7,13 @@ import threading
 
 def run_server():
     try:
-        subprocess.run(["uvicorn", "main:app", "--port", "8001"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["uvicorn", "app.main:app", "--port", "8001"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except:
         pass
 
 def test_dashboard():
     # Start server in thread
-    server_process = subprocess.Popen(["uvicorn", "main:app", "--port", "8011"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    server_process = subprocess.Popen(["uvicorn", "app.main:app", "--port", "8011"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     time.sleep(5) # Wait for startup
     
     try:
