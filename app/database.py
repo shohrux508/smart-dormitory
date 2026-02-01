@@ -57,6 +57,16 @@ class AuthCode(Base):
     telegram_id = Column(BigInteger, index=True)
 
 
+class TelegramUser(Base):
+    """Пользователи Телеграм бота"""
+    __tablename__ = "telegram_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(Integer, unique=True, index=True)
+    first_name = Column(String, nullable=True)
+    username = Column(String, nullable=True)
+
+
 class Token(Base):
     """Токены доступа (Access & Refresh)"""
     __tablename__ = "tokens"

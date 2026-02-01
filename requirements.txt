@@ -6,4 +6,5 @@ httpx
 python-multipart
 sqlalchemy
 aiofiles
-aiogram>=3.0
+aiogram>=3.0.0
+python-dotenv

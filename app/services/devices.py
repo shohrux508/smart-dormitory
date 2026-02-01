@@ -4,7 +4,11 @@ from datetime import datetime
 from fastapi import WebSocket
 from pydantic import BaseModel
 
-# --- Data Models ---
+
+from app.services.telegram_bot import notify_all_users
+from app.services.connection_manager import dashboard_manager
+
+
 
 class DeviceHello(BaseModel):
     type: str  # "device_hello"
@@ -121,6 +125,9 @@ class ConnectionManager:
                 "device_id": device_id,
                 "state": state
             })
+            
+            # Notify Telegram Users
+            await notify_all_users(f"Device {device_id} updated state to {state}")
 
     def get_connection(self, device_id: str) -> Optional[WebSocket]:
         if device_id in self.devices:
@@ -152,6 +159,14 @@ class ConnectionManager:
         # Update Authority
         target_state = "ON" if action == "TURN_ON" else "OFF"
         device.state = target_state
+        
+        # Broadcast to Dashboard (Optimistic update from server side)
+        await dashboard_manager.broadcast(
+            StateUpdate(type="state_update", device_id=device_id, state=target_state).model_dump_json()
+        )
+
+        # Notify Telegram Users
+        await notify_all_users(f"Command sent to {device_id}: {action} (State: {target_state})")
         
         if device.status == "online" and device.connection:
             cmd = Command(action=action)

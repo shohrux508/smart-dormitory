@@ -9,6 +9,7 @@ from pydantic import BaseModel
 # Импорт основных компонентов
 from app.services.devices import manager, DeviceHello, StateUpdate, Command, Device
 
+
 # Импорт сервиса Алисы
 from app.routers.alice import router as alice_router
 
@@ -22,24 +23,18 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     # Запускаем фоновую задачу heartbeat
     task = asyncio.create_task(manager.run_heartbeat())
+    # Запускаем Телеграм бота
+    bot_task = asyncio.create_task(start_bot())
+    
     yield
+    
     # При выключении можно отменить задачу, если нужно
+    await stop_bot()
     task.cancel()
+    # bot_task will be cancelled/stopped by stop_bot logic usually, or we can cancel it
+    bot_task.cancel()
 
 app = FastAPI(title="Smart Dormitory Desk Light", lifespan=lifespan)
-
-# Создаем таблицы при запуске
-Base.metadata.create_all(bind=engine)
-
-# Подключаем роутер Алисы
-app.include_router(alice_router)
-
-
-# --- Startup ---
-# Lifespan replaces on_event("startup")
-
-
-@app.get("/api/info")
 async def root():
     """Проверка работы сервера."""
     return {
@@ -105,6 +100,9 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"Unexpected error with {device_id}: {e}")
         if device_id:
              manager.disconnect(device_id)
+
+
+
 
 
 # --- HTTP API (Legacy / Direct Control) ---
