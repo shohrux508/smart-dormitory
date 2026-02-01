@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 from app.services.telegram_bot import notify_all_users
-from app.services.connection_manager import dashboard_manager
+
 
 
 
@@ -161,9 +161,11 @@ class ConnectionManager:
         device.state = target_state
         
         # Broadcast to Dashboard (Optimistic update from server side)
-        await dashboard_manager.broadcast(
-            StateUpdate(type="state_update", device_id=device_id, state=target_state).model_dump_json()
-        )
+        await self.broadcast({
+            "type": "state_change",
+            "device_id": device_id,
+            "state": target_state
+        })
 
         # Notify Telegram Users
         await notify_all_users(f"Command sent to {device_id}: {action} (State: {target_state})")

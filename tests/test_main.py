@@ -12,7 +12,7 @@ def clean_manager():
     yield
 
 def test_read_root():
-    response = client.get("/api/info")
+    response = client.get("/")
     assert response.status_code == 200
     data = response.json()
     assert "service" in data

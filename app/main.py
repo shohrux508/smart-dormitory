@@ -16,6 +16,7 @@ from app.routers.alice import router as alice_router
 # Импорт БД
 # User и DeviceMeta удалены
 from app.database import engine, Base, get_db
+from app.services.telegram_bot import start_bot, stop_bot
 
 from contextlib import asynccontextmanager
 
@@ -35,6 +36,10 @@ async def lifespan(app: FastAPI):
     bot_task.cancel()
 
 app = FastAPI(title="Smart Dormitory Desk Light", lifespan=lifespan)
+
+# Подключаем роутер Алисы (без префикса, так как тесты ожидают /authorize и /v1.0 в корне)
+app.include_router(alice_router)
+@app.get("/")
 async def root():
     """Проверка работы сервера."""
     return {
