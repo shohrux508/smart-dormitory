@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 # Импорт основных компонентов
 from app.services.devices import manager, DeviceHello, StateUpdate, Command, Device
+from app.services.connection_manager import dashboard_manager
 
 # Импорт сервиса Алисы
 from app.routers.alice import router as alice_router
@@ -97,6 +98,17 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"Unexpected error with {device_id}: {e}")
         if device_id:
              manager.disconnect(device_id)
+
+
+@app.websocket("/ws/dashboard")
+async def websocket_dashboard(websocket: WebSocket):
+    await dashboard_manager.connect(websocket)
+    try:
+        while True:
+            # Keep alive / listen for client messages (if any needed in future)
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        dashboard_manager.disconnect(websocket)
 
 
 # --- HTTP API (Legacy / Direct Control) ---
