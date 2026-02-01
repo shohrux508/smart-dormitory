@@ -25,12 +25,21 @@ Base.metadata.create_all(bind=engine)
 app.include_router(alice_router)
 
 
+# Импорт сервиса Телеграм бота
+from app.services.telegram_bot import start_bot, stop_bot
+
 # --- Startup ---
 
 @app.on_event("startup")
 async def startup_event():
     # Запускаем фоновую задачу heartbeat
     asyncio.create_task(manager.run_heartbeat())
+    # Запускаем Телеграм бота
+    asyncio.create_task(start_bot())
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await stop_bot()
 
 
 @app.get("/api/info")
