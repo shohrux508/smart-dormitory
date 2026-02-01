@@ -118,16 +118,6 @@ class ConnectionManager:
             self.devices[device_id].state = state
             self.devices[device_id].last_seen = datetime.now().timestamp()
             print(f"State updated for {device_id}: {state}")
-            
-            # Broadcast update
-            await self.broadcast({
-                "type": "state_change",
-                "device_id": device_id,
-                "state": state
-            })
-            
-            # Notify Telegram Users
-            await notify_all_users(f"Device {device_id} updated state to {state}")
 
     def get_connection(self, device_id: str) -> Optional[WebSocket]:
         if device_id in self.devices:
@@ -159,16 +149,6 @@ class ConnectionManager:
         # Update Authority
         target_state = "ON" if action == "TURN_ON" else "OFF"
         device.state = target_state
-        
-        # Broadcast to Dashboard (Optimistic update from server side)
-        await self.broadcast({
-            "type": "state_change",
-            "device_id": device_id,
-            "state": target_state
-        })
-
-        # Notify Telegram Users
-        await notify_all_users(f"Command sent to {device_id}: {action} (State: {target_state})")
         
         if device.status == "online" and device.connection:
             cmd = Command(action=action)

@@ -8,7 +8,10 @@ from pydantic import BaseModel
 
 # Импорт основных компонентов
 from app.services.devices import manager, DeviceHello, StateUpdate, Command, Device
+<<<<<<< HEAD
 
+=======
+>>>>>>> parent of e478d05 (feat: web ui upgraded)
 
 # Импорт сервиса Алисы
 from app.routers.alice import router as alice_router
@@ -107,9 +110,12 @@ async def websocket_endpoint(websocket: WebSocket):
              manager.disconnect(device_id)
 
 
+<<<<<<< HEAD
 
 
 
+=======
+>>>>>>> parent of e478d05 (feat: web ui upgraded)
 # --- HTTP API (Legacy / Direct Control) ---
 
 @app.get("/api/devices")
