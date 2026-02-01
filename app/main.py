@@ -13,9 +13,20 @@ from app.services.devices import manager, DeviceHello, StateUpdate, Command, Dev
 from app.routers.alice import router as alice_router
 
 # Импорт БД
-from app.database import engine, Base, get_db, DeviceMeta, User
+# User и DeviceMeta удалены
+from app.database import engine, Base, get_db
 
-app = FastAPI(title="Smart Dormitory Desk Light")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Запускаем фоновую задачу heartbeat
+    task = asyncio.create_task(manager.run_heartbeat())
+    yield
+    # При выключении можно отменить задачу, если нужно
+    task.cancel()
+
+app = FastAPI(title="Smart Dormitory Desk Light", lifespan=lifespan)
 
 # Создаем таблицы при запуске
 Base.metadata.create_all(bind=engine)
@@ -25,11 +36,7 @@ app.include_router(alice_router)
 
 
 # --- Startup ---
-
-@app.on_event("startup")
-async def startup_event():
-    # Запускаем фоновую задачу heartbeat
-    asyncio.create_task(manager.run_heartbeat())
+# Lifespan replaces on_event("startup")
 
 
 @app.get("/api/info")
@@ -89,6 +96,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     print(f"Ignored invalid update from {device_id}")
             except Exception as e:
                 print(f"Error processing message from {device_id}: {e}")
+                pass # Continue listening
 
     except WebSocketDisconnect:
         if device_id:
@@ -146,37 +154,37 @@ async def update_device_settings(
     db: Session = Depends(get_db)
 ):
     """
-    Установить имя и комнату для устройства (для Алисы).
+    Установить имя и комнату для устройства.
+    NOTE: В новой версии без аккаунтов этот эндпоинт пока отключен/урезан,
+    так как настройки хранятся в TelegramBookmarks, а здесь нет user context.
+    В будущем можно передавать telegram_id или токен авторизации.
     """
-    # Для простоты привязываем к дефолтному юзеру 'shohruh' или первому попавшемуся.
-    # В реальной системе нужно брать user_id из токена админа.
-    # Сейчас мы просто найдем user 'shohruh', если нет - создадим.
-    
-    user = db.query(User).filter(User.username == "shohruh").first()
-    if not user:
-        user = User(username="shohruh")
-        db.add(user)
-        db.commit()
-    
-    meta = db.query(DeviceMeta).filter(
-        DeviceMeta.device_id == device_id,
-        DeviceMeta.user_id == user.id
-    ).first()
-    
-    if not meta:
-        meta = DeviceMeta(
-            device_id=device_id,
-            user_id=user.id,
-            custom_name=settings.name,
-            room=settings.room
-        )
-        db.add(meta)
-    else:
-        meta.custom_name = settings.name
-        meta.room = settings.room
-    
-    db.commit()
-    return {"status": "updated", "name": settings.name, "room": settings.room}
+    # TODO: Реализовать логику для TelegramBookmark if authorization header is present
+    return {"status": "error", "message": "Settings update only available via Telegram Bot or Alice context"}
+
+# --- Debug Catch-All for WebSockets ---
+@app.websocket("/ws/dashboard")
+async def websocket_dashboard(websocket: WebSocket):
+    await manager.connect_client(websocket)
+    try:
+        while True:
+            # Keep connection alive, maybe handle ping/pong if needed
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        manager.disconnect_client(websocket)
+    except Exception as e:
+        print(f"Dashboard client error: {e}")
+        manager.disconnect_client(websocket)
+
+# --- Debug Catch-All for WebSockets ---
+@app.websocket("/{path:path}")
+async def websocket_catchall(websocket: WebSocket, path: str):
+    print(f"⚠️ Caught stray WebSocket connection to path: /{path}")
+    await websocket.accept()
+    await websocket.send_text("Invalid WebSocket Path. Use /ws or /ws/dashboard")
+    await websocket.close(code=1008)
 
 # --- Static Files (Dashboard) ---
 # Mount static files at the root. 

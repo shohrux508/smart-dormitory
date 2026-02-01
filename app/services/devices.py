@@ -40,6 +40,31 @@ class ConnectionManager:
     def __init__(self):
         # device_id -> Device
         self.devices: Dict[str, Device] = {}
+        # Dashboard clients
+        self.clients: List[WebSocket] = []
+
+    async def connect_client(self, websocket: WebSocket):
+        await websocket.accept()
+        self.clients.append(websocket)
+        # Send initial state
+        await websocket.send_json({
+            "type": "full_state", 
+            "devices": self.list_devices()
+        })
+        print(f"Client connected. Total clients: {len(self.clients)}")
+
+    def disconnect_client(self, websocket: WebSocket):
+        if websocket in self.clients:
+            self.clients.remove(websocket)
+            print(f"Client disconnected. Total clients: {len(self.clients)}")
+
+    async def broadcast(self, message: dict):
+        for client in self.clients:
+            try:
+                await client.send_json(message)
+            except Exception:
+                # We might want to remove dead clients here, but usually disconnect_client handles it
+                pass
 
     def get_or_create_device(self, device_id: str) -> Device:
         if device_id not in self.devices:
@@ -61,18 +86,41 @@ class ConnectionManager:
         sync_msg = SyncStateMessage(state=device.state)
         await websocket.send_text(sync_msg.model_dump_json())
 
+        # 4. Broadcast to clients
+        await self.broadcast({
+            "type": "device_connected",
+            "device": {
+                "device_id": device.device_id,
+                "state": device.state,
+                "status": "online"
+            }
+        })
+
     def disconnect(self, device_id: str):
         if device_id in self.devices:
             device = self.devices[device_id]
             device.connection = None
             device.status = "offline"
             print(f"Device disconnected: {device_id}")
+            
+            # Broadcast disconnect
+            asyncio.create_task(self.broadcast({
+                "type": "device_disconnected",
+                "device_id": device_id
+            }))
 
     async def update_state(self, device_id: str, state: str):
         if device_id in self.devices:
             self.devices[device_id].state = state
             self.devices[device_id].last_seen = datetime.now().timestamp()
             print(f"State updated for {device_id}: {state}")
+            
+            # Broadcast update
+            await self.broadcast({
+                "type": "state_change",
+                "device_id": device_id,
+                "state": state
+            })
 
     def get_connection(self, device_id: str) -> Optional[WebSocket]:
         if device_id in self.devices:

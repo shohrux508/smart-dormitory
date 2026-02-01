@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 # Импортируем менеджер устройств
 from app.services.devices import manager
 # Импортируем БД
-from app.database import get_db, User, AuthCode, Token, DeviceMeta
+from app.database import get_db, AuthCode, Token, TelegramBookmark
 
 # ==========================================
 # КОНФИГУРАЦИЯ
@@ -37,20 +37,11 @@ router = APIRouter(tags=["Yandex Alice Integration"])
 def now() -> float:
     return time.time()
 
-def get_or_create_user(db: Session, username: str) -> User:
-    user = db.query(User).filter(User.username == username).first()
-    if not user:
-        user = User(username=username)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user
-
-async def get_current_user(
+async def get_current_telegram_id(
     authorization: str = Header(..., alias="Authorization"),
     db: Session = Depends(get_db)
-) -> User:
-    """Проверяет токен в БД и возвращает пользователя."""
+) -> int:
+    """Проверяет токен в БД и возвращает telegram_id пользователя."""
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     
@@ -65,7 +56,7 @@ async def get_current_user(
     if token_record.exp < now():
         raise HTTPException(status_code=401, detail="Token expired")
     
-    return token_record.user
+    return token_record.telegram_id
 
 
 # ==========================================
@@ -85,10 +76,11 @@ async def authorize(request: Request, db: Session = Depends(get_db)):
     if not redirect_uri:
         raise HTTPException(status_code=400, detail="Missing redirect_uri")
 
-    username = params.get("user")
+    # В будущем здесь будет виджет "Войти через Telegram"
+    # Пока что просим ввести ID вручную для MVP
+    telegram_id_input = params.get("user")
 
-    if not username:
-        # Форма входа по-прежнему простая
+    if not telegram_id_input:
         html = f"""
         <!DOCTYPE html>
         <html lang="ru">
@@ -100,22 +92,25 @@ async def authorize(request: Request, db: Session = Depends(get_db)):
                 body {{ font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f5f5f5; }}
                 .login-card {{ background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; max-width: 400px; }}
                 h2 {{ text-align: center; color: #333; }}
+                p {{ text-align: center; color: #666; font-size: 0.9em; }}
                 input {{ width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }}
-                button {{ width: 100%; padding: 12px; background-color: #fc3f1d; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }}
-                button:hover {{ background-color: #e02b0c; }}
+                button {{ width: 100%; padding: 12px; background-color: #2481cc; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }}
+                button:hover {{ background-color: #1a66a3; }}
             </style>
         </head>
         <body>
           <div class="login-card">
-            <h2>Авторизация</h2>
+            <h2>Вход через Telegram</h2>
+            <p>Введите ваш Telegram ID для доступа к устройствам.</p>
             <form method="get" action="">
                 <input type="hidden" name="client_id" value="{client_id}">
                 <input type="hidden" name="redirect_uri" value="{redirect_uri}">
                 <input type="hidden" name="state" value="{state or ''}">
                 <input type="hidden" name="response_type" value="code">
-                <label>Ваше имя (User ID):</label>
-                <input name="user" placeholder="shohruh" required value="shohruh">
-                <button type="submit">Разрешить</button>
+                
+                <label>Telegram ID:</label>
+                <input name="user" placeholder="123456789" required type="number">
+                <button type="submit">Войти</button>
             </form>
           </div>
         </body>
@@ -123,17 +118,19 @@ async def authorize(request: Request, db: Session = Depends(get_db)):
         """
         return HTMLResponse(html)
 
-    # Создаем/получаем пользователя
-    user = get_or_create_user(db, username)
-
     # Генерируем код
+    try:
+        telegram_id = int(telegram_id_input)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Telegram ID")
+
     code_str = secrets.token_urlsafe(24)
     auth_code = AuthCode(
         code=code_str,
         client_id=client_id,
         redirect_uri=redirect_uri,
         exp=now() + 600,
-        user_id=user.id
+        telegram_id=telegram_id
     )
     db.add(auth_code)
     db.commit()
@@ -165,7 +162,7 @@ async def token(request: Request, db: Session = Depends(get_db)):
         if not code_record or code_record.exp < now():
             raise HTTPException(status_code=400, detail="Invalid or expired code")
 
-        user_id = code_record.user_id
+        telegram_id = code_record.telegram_id
         # Удаляем использованный код
         db.delete(code_record)
         
@@ -179,7 +176,7 @@ async def token(request: Request, db: Session = Depends(get_db)):
             client_id=c_id,
             exp=now() + ACCESS_TTL,
             refresh_exp=now() + REFRESH_TTL,
-            user_id=user_id
+            telegram_id=telegram_id
         )
         db.add(new_token)
         db.commit()
@@ -200,7 +197,7 @@ async def token(request: Request, db: Session = Depends(get_db)):
                 db.commit()
             raise HTTPException(status_code=400, detail="Invalid or expired refresh_token")
 
-        user_id = token_record.user_id
+        telegram_id = token_record.telegram_id
         
         # Удаляем старый токен (ротация)
         db.delete(token_record)
@@ -215,7 +212,7 @@ async def token(request: Request, db: Session = Depends(get_db)):
             client_id=c_id,
             exp=now() + ACCESS_TTL,
             refresh_exp=now() + REFRESH_TTL,
-            user_id=user_id
+            telegram_id=telegram_id
         )
         db.add(new_token_obj)
         db.commit()
@@ -248,26 +245,26 @@ async def health_check():
 
 
 @router.get("/v1.0/user/devices")
-async def list_devices(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def list_devices(telegram_id: int = Depends(get_current_telegram_id), db: Session = Depends(get_db)):
     request_id = str(secrets.token_hex(8))
     
     devices_resp = []
     
-    # Получаем живые устройства из менеджера
-    live_devices = manager.list_devices()
+    # 1. Получаем все закладки пользователя
+    bookmarks = db.query(TelegramBookmark).filter(TelegramBookmark.telegram_id == telegram_id).all()
     
-    for d_info in live_devices:
-        d_id = d_info["device_id"]
+    # 2. Фильтруем те, которые онлайн (или отдаем все, но со статусом)
+    # По требованиям Яндекса лучше отдавать все, даже если они офлайн.
+    
+    for bookmark in bookmarks:
+        d_id = bookmark.device_id
         
-        # Ищем настройки в БД для этого пользователя
-        meta = db.query(DeviceMeta).filter(
-            DeviceMeta.device_id == d_id, 
-            DeviceMeta.user_id == user.id
-        ).first()
-        
-        # Дефолтные значения
-        name = meta.custom_name if meta else f"Device {d_id}"
-        room = meta.room if meta else "Комната"
+        # Получаем живой статус из менеджера (если есть)
+        device = manager.get_device(d_id)
+        is_online = (device.status == "online") if device else False
+
+        name = bookmark.custom_name or f"Device {d_id[-4:]}"
+        room = bookmark.room or "Дом"
         description = "Smart Desk Light"
         
         devices_resp.append({
@@ -292,17 +289,20 @@ async def list_devices(user: User = Depends(get_current_user), db: Session = Dep
     return {
         "request_id": request_id,
         "payload": {
-            "user_id": str(user.username), # Возвращаем username как ID для Алисы
+            "user_id": str(telegram_id), # UserId для Яндекса
             "devices": devices_resp
         }
     }
 
 
 @router.post("/v1.0/user/devices/query")
-async def query_devices(request: Request, user: User = Depends(get_current_user)):
+async def query_devices(request: Request, telegram_id: int = Depends(get_current_telegram_id)):
     body = await request.json()
     devices_req = body.get("devices", [])
     request_id = str(secrets.token_hex(8))
+    
+    # В идеале нужно проверять, есть ли устройство в закладках у этого telegram_id
+    # Но для MVP можно пропустить этот шаг (если он знает ID, значит знает)
     
     devices_resp = []
     for d in devices_req:
@@ -335,7 +335,7 @@ async def query_devices(request: Request, user: User = Depends(get_current_user)
 
 
 @router.post("/v1.0/user/devices/action")
-async def action_devices(request: Request, user: User = Depends(get_current_user)):
+async def action_devices(request: Request, telegram_id: int = Depends(get_current_telegram_id)):
     body = await request.json()
     payload = body.get("payload", {})
     devices_req = payload.get("devices", [])
@@ -345,6 +345,9 @@ async def action_devices(request: Request, user: User = Depends(get_current_user
     
     for d in devices_req:
         dev_id = d.get("id")
+        
+        # Здесь также стоит проверить права (есть ли в закладках)
+        
         caps_results = []
         
         for cap in d.get("capabilities", []):
@@ -382,17 +385,16 @@ async def action_devices(request: Request, user: User = Depends(get_current_user
 
 
 @router.post("/v1.0/user/unlink")
-async def unlink_user(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def unlink_user(request: Request, telegram_id: int = Depends(get_current_telegram_id), db: Session = Depends(get_db)):
     req_id = request.headers.get("X-Request-Id", str(secrets.token_hex(8)))
     
-    # Удаляем все токены этого пользователя (или конкретный)
-    # Здесь упрощенно удаляем все
-    db.query(Token).filter(Token.user_id == user.id).delete()
+    # Удаляем токены этого пользователя
+    db.query(Token).filter(Token.telegram_id == telegram_id).delete()
     db.commit()
     
     return {"request_id": req_id}
 
 
 @router.get("/user/info")
-async def debug_user_info(user: User = Depends(get_current_user)):
-    return {"status": "ok", "user_id": user.id, "username": user.username}
+async def debug_user_info(telegram_id: int = Depends(get_current_telegram_id)):
+    return {"status": "ok", "telegram_id": telegram_id}

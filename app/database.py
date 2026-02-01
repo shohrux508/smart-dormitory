@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, ForeignKey, UniqueConstraint, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 
@@ -20,16 +20,28 @@ Base = declarative_base()
 # МОДЕЛИ ДАННЫХ
 # ====================
 
-class User(Base):
-    """Пользователь системы"""
-    __tablename__ = "users"
+# Примечание: Таблица User удалена полностью.
+# Вместо нее используем telegram_id как внешний идентификатор.
+
+class TelegramBookmark(Base):
+    """
+    Закладки устройств пользователя Telegram.
+    Это НЕ аккаунт, а просто локальная книга сохраненных устройств.
+    """
+    __tablename__ = "telegram_bookmarks"
 
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
+    telegram_id = Column(BigInteger, index=True) # ID пользователя в Telegram
+    device_id = Column(String, index=True)       # ID устройства
     
-    tokens = relationship("Token", back_populates="user")
-    auth_codes = relationship("AuthCode", back_populates="user")
-    device_metas = relationship("DeviceMeta", back_populates="user")
+    # Локальные настройки отображения для конкретного пользователя
+    custom_name = Column(String) # "Люстра"
+    room = Column(String)        # "Гостиная"
+
+    # Ограничение: один пользователь может добавить устройство только один раз
+    __table_args__ = (
+        UniqueConstraint('telegram_id', 'device_id', name='uq_telegram_device'),
+    )
 
 
 class AuthCode(Base):
@@ -41,8 +53,8 @@ class AuthCode(Base):
     redirect_uri = Column(String)
     exp = Column(Float) # Timestamp истечения
     
-    user_id = Column(Integer, ForeignKey("users.id"))
-    user = relationship("User", back_populates="auth_codes")
+    # Ссылка на Telegram пользователя (без внешнего ключа к таблице users)
+    telegram_id = Column(BigInteger, index=True)
 
 
 class Token(Base):
@@ -55,23 +67,9 @@ class Token(Base):
     exp = Column(Float) # Timestamp истечения access token
     refresh_exp = Column(Float) # Timestamp истечения refresh token
     
-    user_id = Column(Integer, ForeignKey("users.id"))
-    user = relationship("User", back_populates="tokens")
+    # Ссылка на Telegram пользователя
+    telegram_id = Column(BigInteger, index=True)
 
-
-class DeviceMeta(Base):
-    """Метаданные устройств (Имена, Комнаты)"""
-    __tablename__ = "device_meta"
-
-    id = Column(Integer, primary_key=True, index=True)
-    device_id = Column(String, index=True) # ID устройства в системе (esp8266_...)
-    
-    custom_name = Column(String) # "Люстра"
-    room = Column(String)        # "Гостиная"
-    type = Column(String)        # "devices.types.light"
-    
-    user_id = Column(Integer, ForeignKey("users.id"))
-    user = relationship("User", back_populates="device_metas")
 
 # Dependency для получения сессии БД
 def get_db():

@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
-from app.database import Base, get_db, DeviceMeta
+from app.database import Base, get_db, TelegramBookmark
 from app.services.devices import manager, Device
 import app.routers.alice as alice_service
 
@@ -47,15 +47,7 @@ def test_authorize_page():
     assert "Вход в Умный Дом" in response.text
 
 def test_full_oauth_flow():
-    # 1. Authorize (POST to itself as implemented in HTML form action="")
-    # Actually, the user submits the form. In our code, GET /authorize returns form.
-    # To simulate "Accept", we need to see what the form does.
-    # The form implementation in alice_service.py is:
-    # <form method="get" action=""> ... inputs ... </form>
-    # So submitting the form sends a GET request to /authorize with query params + user input.
-    # Wait, if we GET /authorize with valid user param, it should redirect.
-    
-    # Let's try "submitting" the form
+    # 1. Authorize with numeric user ID
     response = client.get(
         "/authorize", 
         params={
@@ -63,9 +55,9 @@ def test_full_oauth_flow():
             "redirect_uri": "https://ya.ru",
             "response_type": "code",
             "state": "123",
-            "user": "test_user"
+            "user": "123456789" # Valid numeric ID
         },
-        follow_redirects=False # We want to catch the redirect
+        follow_redirects=False
     )
     
     assert response.status_code == 302
@@ -94,36 +86,46 @@ def test_full_oauth_flow():
     return tokens["access_token"]
 
 def test_list_devices_with_custom_name():
+    # 1. Get token for user 123456789
     token = test_full_oauth_flow()
     headers = {"Authorization": f"Bearer {token}"}
     
-    # 1. Add device to manager
+    # 2. Add device to manager (online status)
     dev_id = "temp_esp"
-    manager.devices[dev_id] = Device(device_id=dev_id, state="OFF")
+    manager.devices[dev_id] = Device(device_id=dev_id, state="OFF", status="online")
     
-    # 2. Add custom name via API
-    # Logic in main.py: PUT /api/devices/{id}/settings
-    # Note: the user is created during OAuth flow as 'test_user'
-    # But main.py currently hardcodes updating 'shohruh'. 
-    # Let's verify main.py logic. It updates 'shohruh'.
-    # Our test user in OAuth is 'test_user'.
-    # If we want to test metadata, we must ensure users match OR main.py is fixed.
-    # alice_service.py: list_devices uses user from token.
-    # So if I am 'test_user', I see 'test_user's metadata.
-    # main.py sets metadata for 'shohruh'.
-    # Mismatch!
+    # 3. Add Bookmark manually (mimic adding via Telegram Bot)
+    db = TestingSessionLocal()
+    bookmark = TelegramBookmark(
+        telegram_id=123456789,
+        device_id=dev_id,
+        custom_name="Кухня",
+        room="Дом"
+    )
+    db.add(bookmark)
+    db.commit()
+    db.close()
     
-    # FIX: Let's assume for this test we log in as 'shohruh'
-    pass
+    # 4. Check Discovery Service
+    d_resp = client.get("/v1.0/user/devices", headers=headers)
+    assert d_resp.status_code == 200
+    payload = d_resp.json()["payload"]
+    devices = payload["devices"]
+    
+    assert len(devices) == 1
+    assert devices[0]["id"] == dev_id
+    assert devices[0]["name"] == "Кухня"
+    assert devices[0]["room"] == "Дом"
 
 def test_full_flow_shohruh():
-    # 1. Log in as shohruh
+    # 1. Log in as shohruh (using arbitrary ID 508)
+    user_id = "508"
     response = client.get(
         "/authorize", 
         params={
             "client_id": "my-smart-home", 
-            "redirect_uri": "ya.ru", 
-            "user": "shohruh"
+            "redirect_uri": "https://ya.ru", 
+            "user": user_id 
         }, 
         follow_redirects=False
     )
@@ -137,8 +139,17 @@ def test_full_flow_shohruh():
     dev_id = "lamp_1"
     manager.devices[dev_id] = Device(device_id=dev_id)
     
-    # 3. Set Name via "Admin API"
-    client.put(f"/api/devices/{dev_id}/settings", json={"name": "Люстра", "room": "Зал"})
+    # 3. Manually add bookmark (since API is restricted)
+    db = TestingSessionLocal()
+    bookmark = TelegramBookmark(
+        telegram_id=int(user_id),
+        device_id=dev_id,
+        custom_name="Люстра",
+        room="Зал"
+    )
+    db.add(bookmark)
+    db.commit()
+    db.close()
     
     # 4. Check Discovery Service
     d_resp = client.get("/v1.0/user/devices", headers=headers)

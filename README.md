@@ -1,11 +1,17 @@
 # 📡 SMART-DORMITORY: Desk Light Control
 
-**Version:** v3 (Reliability & Alice Integration)  
+**Version:** v3.1 (Web Dashboard & Alice Integration)  
 **Status:** 🟢 Stable
 
-Система управления умным освещением в общежитии ("Умное Общежитие"). Обеспечивает надежное управление устройствами (ESP8266/ESP32) через WebSocket с поддержкой восстановления соединений, а также полную интеграцию с голосовым помощником **Яндекс Алиса**.
+Система управления умным освещением в общежитии ("Умное Общежитие"). Обеспечивает надежное управление устройствами (ESP8266/ESP32) через WebSocket с поддержкой восстановления соединений, имеет красивый веб-интерфейс и полную интеграцию с голосовым помощником **Яндекс Алиса**.
 
-## 🚀 Новые Возможности (v3)
+## 🚀 Основные Возможности
+
+### 🖥️ Современный Web Dashboard
+- **Glassmorphism Design**: Стильный и современный интерфейс с эффектом матового стекла.
+- **Real-time Updates**: Мгновенное обновление статусов устройств через WebSocket.
+- **Responsive**: Адаптирован под мобильные устройства и десктопы.
+- **Тёмная тема**: Автоматическая поддержка системной темы.
 
 ### 🛡️ Reliability Layer (Слой Надежности)
 - **Server Authority**: Сервер является единственным источником истины. При подключении устройство сразу синхронизируется с состоянием на сервере.
@@ -17,31 +23,41 @@
 - **Smart Home API**: Реализация протокола Умного Дома Яндекса (Discovery, Query, Action).
 - **Голосовое управление**: "Алиса, включи свет", "Алиса, выключи лампу".
 
+### 🤖 Telegram Интеграция (Foundation)
+- **Telegram Bookmarks**: Система привязки устройств к Telegram ID пользователей (в разработке).
+- **Aiogram**: Поддержка библиотеки `aiogram` для реализации бота.
+
 ## 🛠 Технологический стек
 
 - **Backend**: Python 3.11, FastAPI, Uvicorn
+- **Frontend**: HTML5, CSS3 (Glassmorphism), Vanilla JS
 - **Protocol**: WebSockets (Custom JSON Protocol), HTTP REST
 - **Storage**: 
   - **RAM**: Состояния устройств (In-Memory для максимальной скорости).
-  - **SQLite**: Пользователи, токены авторизации Алисы и метаданные устройств (через SQLAlchemy).
-- **Testing**: Pytest (Integration + Unit).
+  - **SQLite**: Пользователи, токены авторизации Алисы и закладки устройств (SQLAlchemy).
+- **Interactive**: Aiogram (Telegram Bot support).
 - **Hardware**: ESP8266 / ESP32 (Arduino Framework).
 
 ## 📂 Структура проекта
 
 ```
 .
-├── main.py               # Точка входа (FastAPI), DI, маршрутизация
-├── alice_service.py      # Сервис интеграции с Алисой (OAuth2 + Smart Home API)
-├── devices_core.py       # Ядро управления устройствами (DeviceManager, State Machine)
-├── database.py           # Модели базы данных (User, Token, AuthCode)
-├── auth_module.py        # Вспомогательный модуль авторизации
-├── mock_esp.py           # Эмулятор устройства (поддерживает v3 протокол)
-├── hardware.cpp          # C++ код прошивки для микроконтроллера
-├── test_main.py          # Основные тесты API и WebSocket
-├── test_alice_integration.py # Тесты интеграции с Алисой
-├── requirements.txt      # Зависимости Python
-└── docs/                 # Документация (specs_v3, reports, plans)
+├── app/
+│   ├── main.py               # Точка входа (FastAPI), WebSocket роутинг
+│   ├── database.py           # Модели БД (Telegram, Auth, Token)
+│   ├── routers/
+│   │   └── alice.py          # Роуты для Яндекс Алисы (OAuth2 + API)
+│   └── services/
+│       └── devices.py        # Логика управления устройствами (Manager)
+├── static/                   # Файлы веб-дашборда
+│   ├── index.html
+│   ├── styles.css
+│   └── app.js
+├── tests/                    # Автотесты (Pytest)
+├── docs/                     # Документация
+├── mock_esp.py               # Эмулятор устройства (Firmware v3)
+├── requirements.txt          # Зависимости Python
+└── walkthrough.md            # Пошаговое руководство
 ```
 
 ## ⚙️ Установка и Запуск
@@ -54,16 +70,18 @@ pip install -r requirements.txt
 
 ### 2. Запуск сервера
 ```bash
-uvicorn main:app --reload
+uvicorn app.main:app --reload
 ```
-При первом запуске автоматически создастся файл базы данных `sql_app.db`. Сервер будет доступен по адресу `http://127.0.0.1:8000`.
+При первом запуске автоматически создастся файл базы данных `sql_app.db`. 
+- **API**: `http://127.0.0.1:8000/docs`
+- **Dashboard**: `http://127.0.0.1:8000/`
 
 ### 3. Запуск эмулятора
 Для проверки работы системы без физического устройства:
 ```bash
-python mock_esp.py
+python mock_esp.py --device-id my_lamp
 ```
-Эмулятор подключится к серверу, получит синхронизацию состояния и будет отвечать на Heartbeat-пинги.
+Эмулятор подключится к серверу, синхронизирует состояние и будет поддерживать heartbeat.
 
 ### 4. Тестирование
 ```bash
@@ -76,17 +94,14 @@ pytest
 ### Управление устройствами (REST)
 | Метод | URL | Описание |
 |-------|-----|----------|
-| `GET` | `/api/devices` | Список устройств и их статусов (online/offline) |
-| `POST` | `/api/devices/{id}/turn_on` | Включить устройство (Optimistic) |
-| `POST` | `/api/devices/{id}/turn_off` | Выключить устройство (Optimistic) |
+| `GET` | `/api/devices` | Список устройств и их статусов |
+| `POST` | `/api/devices/{id}/turn_on` | Включить устройство |
+| `POST` | `/api/devices/{id}/turn_off` | Выключить устройство |
 
 ### Яндекс Алиса (Smart Home)
-Для подключения навыка в консоли разработчика Яндекс (настройки навыка):
-- **Authorization URL**: `https://<your-domain>/alice/authorize`
-- **Token URL**: `https://<your-domain>/alice/token`
-- **Endpoint URL**: `https://<your-domain>/alice/v1.0`
-
-> **Примечание**: Для работы с Алисой сервер должен быть доступен из интернета по HTTPS (рекомендуется использовать `ngrok` для разработки).
+- **Auth URL**: `https://<domain>/api/alice/authorize`
+- **Token URL**: `https://<domain>/api/alice/token`
+- **Endpoint URL**: `https://<domain>/api/alice/v1.0`
 
 ## 📡 Протокол (WebSocket v3)
 
@@ -94,13 +109,12 @@ pytest
 
 **Device (Client) → Server:**
 - `{"type": "hello", ...}`: Идентификация при подключении.
-- `{"type": "pong"}`: Ответ на запрос проверки связи.
-- *(Сообщения state_update от устройства в v3 игнорируются для предотвращения конфликтов).*
+- `{"type": "pong"}`: Ответ на ping сервера.
 
 **Server → Device (Client):**
-- `{"type": "sync_state", "state": "ON"}`: Принудительная установка состояния (сразу после подключения).
+- `{"type": "sync_state", "state": "ON"}`: Синхронизация при подключении.
 - `{"type": "ping"}`: Проверка связи (каждые 5 сек).
-- `{"type": "command", "action": "TURN_ON"}`: Команда на выполнение действия.
+- `{"type": "command", "action": "TURN_ON"}`: Команда управления.
 
 ---
 Разработано в рамках проекта Antigravity.

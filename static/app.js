@@ -1,5 +1,6 @@
 const API_URL = '/api/devices';
-const UPDATE_INTERVAL = 2000; // 2 seconds
+// Polling removed in favor of WebSocket
+// const UPDATE_INTERVAL = 2000; 
 
 // DOM Elements
 const devicesGrid = document.getElementById('devices-grid');
@@ -10,13 +11,90 @@ const statusText = connectionStatus.querySelector('.text');
 // State
 let devices = [];
 let pendingUpdates = new Set(); // Track devices currently being toggled
-let isOffline = false;
+let ws = null;
+let reconnectTimer = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    fetchDevices();
-    setInterval(fetchDevices, UPDATE_INTERVAL);
+    initWebSocket();
 });
+
+function initWebSocket() {
+    // Determine protocol (ws or wss)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/dashboard`;
+
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+        console.log('Connected to Dashboard WebSocket');
+        setSystemOnline(true);
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            handleWebSocketMessage(data);
+        } catch (e) {
+            console.error('Error parsing WS message:', e);
+        }
+    };
+
+    ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        setSystemOnline(false);
+        // Try to reconnect in 3 seconds
+        if (!reconnectTimer) {
+            reconnectTimer = setTimeout(initWebSocket, 3000);
+        }
+    };
+
+    ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        ws.close();
+    };
+}
+
+function handleWebSocketMessage(message) {
+    if (message.type === 'full_state') {
+        // Initial load or full refresh
+        devices = message.devices;
+        updateUI();
+    } else if (message.type === 'state_change') {
+        const device = devices.find(d => d.device_id === message.device_id);
+        if (device) {
+            device.state = message.state;
+            // Also update status if implied (usually online if sending updates)
+            device.status = 'online';
+            updateUI();
+        }
+    } else if (message.type === 'device_connected') {
+        // Check if exists
+        const index = devices.findIndex(d => d.device_id === message.device.device_id);
+        if (index !== -1) {
+            devices[index] = message.device;
+        } else {
+            devices.push(message.device);
+        }
+        updateUI();
+    } else if (message.type === 'device_disconnected') {
+        const device = devices.find(d => d.device_id === message.device_id);
+        if (device) {
+            device.status = 'offline';
+            updateUI();
+        }
+    }
+}
+
+// Kept for initial API fetch fallback if needed, but WS handles it now.
+// Leaving fetchDevices for reference or fallback not used here.
+async function fetchDevices() {
+    // Deprecated by WebSocket
+}
 
 async function fetchDevices() {
     try {

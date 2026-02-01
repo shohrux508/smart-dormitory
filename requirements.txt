@@ -6,3 +6,4 @@ httpx
 python-multipart
 sqlalchemy
 aiofiles
+aiogram>=3.0
