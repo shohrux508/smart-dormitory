@@ -1,5 +1,29 @@
 const API_URL = '/api/devices';
-const UPDATE_INTERVAL = 2000; // 2 seconds
+// Extract user_id
+// Priority: 1. Telegram WebApp context 2. URL Query Params
+let userId = null;
+
+// Try Telegram WebApp
+if (window.Telegram && window.Telegram.WebApp) {
+    const tgUser = window.Telegram.WebApp.initDataUnsafe?.user;
+    if (tgUser && tgUser.id) {
+        userId = tgUser.id;
+        console.log('Got user_id from Telegram WebApp:', userId);
+    }
+}
+
+// Fallback to URL (for testing outside TG or if context is missing)
+if (!userId) {
+    const urlParams = new URLSearchParams(window.location.search);
+    userId = urlParams.get('user_id');
+    if (userId) console.log('Got user_id from URL:', userId);
+}
+
+let wsUrl = ((window.location.protocol === 'https:') ? 'wss://' : 'ws://') + window.location.host + '/ws/dashboard';
+if (userId) {
+    wsUrl += `?user_id=${userId}`;
+}
+const WS_URL = wsUrl;
 
 // DOM Elements
 const devicesGrid = document.getElementById('devices-grid');
@@ -9,47 +33,91 @@ const statusText = connectionStatus.querySelector('.text');
 
 // State
 let devices = [];
-let pendingUpdates = new Set(); // Track devices currently being toggled
-let isOffline = false;
+let pendingUpdates = new Set(); // Track devices currently being toggled via API
+let socket = null;
+let reconnectTimer = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
-    fetchDevices();
-    setInterval(fetchDevices, UPDATE_INTERVAL);
+    connectWebSocket();
 });
 
-async function fetchDevices() {
-    try {
-        const response = await fetch(API_URL);
-        if (!response.ok) throw new Error('Network response was not ok');
+function connectWebSocket() {
+    if (socket) {
+        socket.close();
+    }
 
-        const data = await response.json();
+    socket = new WebSocket(WS_URL);
 
-        // Merge data: Don't overwrite devices that are being updated by user
-        if (devices.length === 0) {
-            devices = data;
-        } else {
-            // Update devices array, but respect pending updates
-            devices = data.map(serverDevice => {
-                if (pendingUpdates.has(serverDevice.device_id)) {
-                    // Find local version which has the optimistic state
-                    const localDevice = devices.find(d => d.device_id === serverDevice.device_id);
-                    return localDevice || serverDevice;
-                }
-                return serverDevice;
-            });
-        }
-
-        updateUI();
+    socket.onopen = () => {
+        console.log('Dashboard connected');
         setSystemOnline(true);
-    } catch (error) {
-        console.error('Error fetching devices:', error);
+        // Clear any reconnect timer
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
+
+    socket.onmessage = (event) => {
+        try {
+            const message = JSON.parse(event.data);
+            handleMessage(message);
+        } catch (e) {
+            console.error('Invalid JSON:', e);
+        }
+    };
+
+    socket.onclose = () => {
+        console.log('Dashboard disconnected');
         setSystemOnline(false);
+        // Attempt reconnect
+        reconnectTimer = setTimeout(connectWebSocket, 3000);
+    };
+
+    socket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        socket.close();
+    };
+}
+
+function handleMessage(msg) {
+    if (msg.type === 'full_state') {
+        devices = msg.devices;
+        updateUI();
+    } else if (msg.type === 'device_connected') {
+        // Add or update existing device status
+        const content = msg.device;
+        const exists = devices.find(d => d.device_id === content.device_id);
+        if (exists) {
+            exists.status = 'online';
+            exists.state = content.state; // Sync state
+        } else {
+            devices.push(content);
+        }
+        updateUI();
+    } else if (msg.type === 'device_disconnected') {
+        const devId = msg.device_id;
+        const device = devices.find(d => d.device_id === devId);
+        if (device) {
+            device.status = 'offline';
+            updateUI();
+        }
+    } else if (msg.type === 'state_change') {
+        const { device_id, state } = msg;
+        const device = devices.find(d => d.device_id === device_id);
+
+        // If we have a pending update for this device, we might skip this 
+        // to avoid "flickering" if the WS message arrives before the API returns.
+        // However, usually WS is the source of truth.
+        if (device) {
+            // Only update if not pending OR if the state matches what we expect
+            // Actually, let's trust the server state always.
+            device.state = state;
+            updateUI();
+        }
     }
 }
 
 function updateUI() {
-    // If grid is empty (first load), clear shimmer
+    // If grid is empty (first load), clear shimmer or empty state
     if (devicesGrid.querySelector('.loading-card')) {
         devicesGrid.innerHTML = '';
     }
@@ -57,7 +125,7 @@ function updateUI() {
     // Get existing cards
     const existingCards = Array.from(devicesGrid.children);
 
-    // Remove deleted devices
+    // Remove deleted devices (if any logic for removal exists, currently only offline)
     existingCards.forEach(card => {
         if (!devices.find(d => d.device_id === card.dataset.id)) {
             card.remove();
@@ -93,7 +161,7 @@ function createDeviceCard(device) {
                 ${device.status}
             </div>
         </div>
-        <h3 class="device-name">${device.device_id}</h3>
+        <h3 class="device-name">${device.name || device.device_id}</h3>
         <p class="device-room">Room 101</p>
         
         <div class="toggle-switch">
@@ -105,7 +173,7 @@ function createDeviceCard(device) {
     // Attach listener ONLY to the switch
     const switchEl = card.querySelector('.toggle-switch');
     switchEl.addEventListener('click', (e) => {
-        e.stopPropagation(); // Prevent card click if we ever add one
+        e.stopPropagation();
         toggleDevice(device);
     });
 
@@ -124,19 +192,17 @@ function updateDeviceCard(card, device) {
     statusEl.className = `device-status ${device.status === 'online' ? 'status-online' : 'status-offline'}`;
 
     // Update Label
-    card.querySelector('.switch-label').textContent = device.state;
+    const label = card.querySelector('.switch-label');
+    if (label) label.textContent = device.state;
 }
 
-// Logic: Turn On/Off
+// Logic: Turn On/Off via API
 async function toggleDevice(deviceArg) {
     const deviceId = deviceArg.device_id;
 
-    // Find the CURRENT state from the global array,
-    // because 'deviceArg' comes from the event listener closure and might be stale.
     const currentDevice = devices.find(d => d.device_id === deviceId);
     if (!currentDevice) return;
 
-    // Prevent if offline or already processing
     if (currentDevice.status === 'offline' || pendingUpdates.has(deviceId)) return;
 
     const newState = currentDevice.state === 'ON' ? 'OFF' : 'ON';
@@ -145,9 +211,8 @@ async function toggleDevice(deviceArg) {
     // 1. Mark as pending
     pendingUpdates.add(deviceId);
 
-    // 2. Update Local State (Optimistic)
-    // We update the object in the 'devices' array directly
-    const deviceIndex = devices.indexOf(currentDevice);
+    // 2. Optimistic Update
+    const deviceIndex = devices.findIndex(d => d.device_id === deviceId);
     if (deviceIndex !== -1) {
         devices[deviceIndex].state = newState;
     }
@@ -161,8 +226,7 @@ async function toggleDevice(deviceArg) {
 
     try {
         await fetch(`/api/devices/${deviceId}/${action}`, { method: 'POST' });
-        // Success: Remove from pending, next poll will confirm state
-        // For smoother UX, remove processing class now
+        // Success: Remove from pending
         if (card) card.classList.remove('processing');
         pendingUpdates.delete(deviceId);
 
@@ -170,7 +234,7 @@ async function toggleDevice(deviceArg) {
         console.error('Error toggling device:', error);
         // Revert State
         if (deviceIndex !== -1) {
-            devices[deviceIndex].state = (newState === 'ON' ? 'OFF' : 'ON'); // toggle back
+            devices[deviceIndex].state = (newState === 'ON' ? 'OFF' : 'ON');
             if (card) {
                 card.classList.remove('processing');
                 updateDeviceCard(card, devices[deviceIndex]);
@@ -184,12 +248,14 @@ function setSystemOnline(isOnline) {
     if (isOnline) {
         statusDot.style.backgroundColor = 'var(--success)';
         statusDot.style.boxShadow = '0 0 8px var(--success)';
-        statusText.textContent = 'System Online';
+        // Show ID for validation
+        const statusMsg = userId ? `Online (ID: ${userId})` : 'Online (Guest)';
+        statusText.textContent = statusMsg;
         connectionStatus.style.background = 'rgba(34, 197, 94, 0.1)';
     } else {
         statusDot.style.backgroundColor = 'var(--danger)';
         statusDot.style.boxShadow = '0 0 8px var(--danger)';
-        statusText.textContent = 'Connection Lost';
+        statusText.textContent = 'Disconnected';
         connectionStatus.style.background = 'rgba(239, 68, 68, 0.1)';
     }
 }

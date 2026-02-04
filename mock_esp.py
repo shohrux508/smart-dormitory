@@ -10,10 +10,7 @@ SERVER_URI = "ws://127.0.0.1:8000/ws"
 async def device_client(device_id):
     uri = SERVER_URI
     print(f"Connecting to {uri} as {device_id}...")
-    
-    extra_headers = {}
-    
-    async with websockets.connect(uri, extra_headers=extra_headers) as websocket:
+    async with websockets.connect(uri) as websocket:
         print("Connected to server!")
         
         # 1. Send Hello

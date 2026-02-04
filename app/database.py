@@ -3,13 +3,24 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, F
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 
-# Используем SQLite файл
-SQLALCHEMY_DATABASE_URL = "sqlite:///./sql_app.db"
+import os
+from app.config import settings
+
+# Получаем URL БД из настроек
+SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
+
+# Railway и Heroku могут отдавать postgres://, но SQLAlchemy требует postgresql://
+if SQLALCHEMY_DATABASE_URL and SQLALCHEMY_DATABASE_URL.startswith("postgres://"):
+    SQLALCHEMY_DATABASE_URL = SQLALCHEMY_DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Настройка аргументов подключения
+connect_args = {}
+if "sqlite" in SQLALCHEMY_DATABASE_URL:
+    connect_args = {"check_same_thread": False}
 
 # Создаем движок
-# connect_args={"check_same_thread": False} нужен для SQLite в многопоточном приложении (FastAPI)
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    SQLALCHEMY_DATABASE_URL, connect_args=connect_args
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

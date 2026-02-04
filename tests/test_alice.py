@@ -8,6 +8,8 @@ from app.main import app
 from app.database import Base, get_db, TelegramBookmark
 from app.services.devices import manager, Device
 import app.routers.alice as alice_service
+from app.config import settings
+
 
 # --- Setup In-Memory DB for Tests ---
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -42,7 +44,7 @@ def init_db():
 
 
 def test_authorize_page():
-    response = client.get("/authorize?client_id=my-smart-home&redirect_uri=https://ya.ru&response_type=code&state=123")
+    response = client.get(f"/authorize?client_id={settings.ALICE_CLIENT_ID}&redirect_uri=https://ya.ru&response_type=code&state=123")
     assert response.status_code == 200
     assert "Вход в Умный Дом" in response.text
 
@@ -51,7 +53,7 @@ def test_full_oauth_flow():
     response = client.get(
         "/authorize", 
         params={
-            "client_id": "my-smart-home",
+            "client_id": settings.ALICE_CLIENT_ID,
             "redirect_uri": "https://ya.ru",
             "response_type": "code",
             "state": "123",
@@ -74,8 +76,8 @@ def test_full_oauth_flow():
     response = client.post("/token", data={
         "grant_type": "authorization_code",
         "code": code,
-        "client_id": "my-smart-home",
-        "client_secret": "supersecret123"
+        "client_id": settings.ALICE_CLIENT_ID,
+        "client_secret": settings.ALICE_CLIENT_SECRET
     })
     
     assert response.status_code == 200
@@ -123,7 +125,7 @@ def test_full_flow_shohruh():
     response = client.get(
         "/authorize", 
         params={
-            "client_id": "my-smart-home", 
+            "client_id": settings.ALICE_CLIENT_ID, 
             "redirect_uri": "https://ya.ru", 
             "user": user_id 
         }, 
@@ -131,7 +133,7 @@ def test_full_flow_shohruh():
     )
     code = response.headers["location"].split("code=")[1].split("&")[0]
     
-    resp = client.post("/token", data={"grant_type": "authorization_code", "code": code, "client_id": "my-smart-home", "client_secret": "supersecret123"})
+    resp = client.post("/token", data={"grant_type": "authorization_code", "code": code, "client_id": settings.ALICE_CLIENT_ID, "client_secret": settings.ALICE_CLIENT_SECRET})
     token = resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     

@@ -2,10 +2,10 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.services.devices import manager
+from app.database import SessionLocal, TelegramBookmark
 
-# Create separate clients to potentially avoid single-session blocking
-dashboard_client = TestClient(app)
-device_client = TestClient(app)
+# Use a single client instance
+client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def clean_manager():
@@ -15,37 +15,55 @@ def clean_manager():
 
 def test_dashboard_websocket_flow():
     device_id = "dashboard_test_dev"
+    test_user_id = 777
     
-    # 1. Connect Dashboard
-    with dashboard_client.websocket_connect("/ws/dashboard") as dashboard_ws:
-        # 1.1 Receive Initial State
-        init_msg = dashboard_ws.receive_json()
-        assert init_msg["type"] == "full_state"
-        assert init_msg["devices"] == []
-        
-        # 2. Connect Device using secondary client
-        with device_client.websocket_connect("/ws") as device_ws:
-            device_ws.send_json({"type": "device_hello", "device_id": device_id, "state": "OFF"})
-            device_ws.receive_json() # Consume sync_state
+    # Setup: Create bookmark
+    db = SessionLocal()
+    # Cleanup first
+    db.query(TelegramBookmark).filter(TelegramBookmark.telegram_id == test_user_id).delete()
+    
+    bookmark = TelegramBookmark(telegram_id=test_user_id, device_id=device_id, custom_name="Test Device")
+    db.add(bookmark)
+    db.commit()
+    db.close()
+    
+    try:
+        # 1. Connect Dashboard WITH user_id
+        with client.websocket_connect(f"/ws/dashboard?user_id={test_user_id}") as dashboard_ws:
+            # 1.1 Receive Initial State
+            init_msg = dashboard_ws.receive_json()
+            assert init_msg["type"] == "full_state"
+            assert init_msg["devices"] == []
             
-            # 3. Dashboard should receive device_connected
-            # Ideally this shouldn't block if the buffer is fine
+            # 2. Connect Device using the same client
+            with client.websocket_connect("/ws") as device_ws:
+                device_ws.send_json({"type": "device_hello", "device_id": device_id, "state": "OFF"})
+                device_ws.receive_json() # Consume sync_state
+                
+                # 3. Dashboard should receive device_connected
+                dash_msg = dashboard_ws.receive_json()
+                assert dash_msg["type"] == "device_connected"
+                assert dash_msg["device"]["device_id"] == device_id
+                assert dash_msg["device"]["status"] == "online"
+                
+                # 4. Update Device State
+                device_ws.send_json({"type": "state_update", "device_id": device_id, "state": "ON"})
+                
+                # 5. Dashboard should receive state_change
+                dash_msg = dashboard_ws.receive_json()
+                assert dash_msg["type"] == "state_change"
+                assert dash_msg["device_id"] == device_id
+                assert dash_msg["state"] == "ON"
+                
+            # 6. Device Disconnects
+            # Dashboard should receive device_disconnected
             dash_msg = dashboard_ws.receive_json()
-            assert dash_msg["type"] == "device_connected"
-            assert dash_msg["device"]["device_id"] == device_id
-            assert dash_msg["device"]["status"] == "online"
-            
-            # 4. Update Device State
-            device_ws.send_json({"type": "state_update", "device_id": device_id, "state": "ON"})
-            
-            # 5. Dashboard should receive state_change
-            dash_msg = dashboard_ws.receive_json()
-            assert dash_msg["type"] == "state_change"
+            assert dash_msg["type"] == "device_disconnected"
             assert dash_msg["device_id"] == device_id
-            assert dash_msg["state"] == "ON"
             
-        # 6. Device Disconnects
-        # Dashboard should receive device_disconnected
-        dash_msg = dashboard_ws.receive_json()
-        assert dash_msg["type"] == "device_disconnected"
-        assert dash_msg["device_id"] == device_id
+    finally:
+        # Cleanup DB
+        db = SessionLocal()
+        db.query(TelegramBookmark).filter(TelegramBookmark.telegram_id == test_user_id).delete()
+        db.commit()
+        db.close()

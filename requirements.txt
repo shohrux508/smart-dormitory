@@ -8,3 +8,5 @@ sqlalchemy
 aiofiles
 aiogram>=3.0.0
 python-dotenv
+psycopg2-binary
+pydantic-settings

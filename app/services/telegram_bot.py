@@ -4,16 +4,14 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
-from app.database import SessionLocal, TelegramUser
+from app.database import SessionLocal, TelegramUser, TelegramBookmark
 from sqlalchemy.future import select
 
 # Load environment variables
-from pathlib import Path
-env_path = Path(__file__).resolve().parent.parent.parent / ".env"
-load_dotenv(dotenv_path=env_path, override=True)
+from app.config import settings
 
-TELEGRAM_TOKEN = os.getenv("BOT_TOKEN")
-WEBAPP_URL = os.getenv("WEB_URL")
+TELEGRAM_TOKEN = settings.BOT_TOKEN
+WEBAPP_URL = settings.WEB_URL
 
 if WEBAPP_URL and not WEBAPP_URL.startswith("http"):
     WEBAPP_URL = f"https://{WEBAPP_URL}"
@@ -58,15 +56,67 @@ async def cmd_start(message: types.Message):
         await message.answer("WebApp URL not configured.")
         return
 
+    # Append user_id to URL for personalized dashboard
+    sep = "&" if "?" in WEBAPP_URL else "?"
+    user_url = f"{WEBAPP_URL}{sep}user_id={user.id}"
+
     markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Open Dashboard", web_app=WebAppInfo(url=WEBAPP_URL))]
+        [InlineKeyboardButton(text="Open My Dashboard", web_app=WebAppInfo(url=user_url))]
     ])
     
-    await message.answer("Welcome to Smart Dormitory Bot! Click below to open the dashboard.", reply_markup=markup)
+    await message.answer(
+        f"👋 Welcome to Smart Dormitory!\n\n"
+        f"Your ID: `{user.id}`\n\n"
+        f"To add a device, send:\n`/add <device_id> [name]`\n"
+        f"Example: `/add desk_lamp My Lamp`\n\n"
+        f"Click below to control your devices:", 
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+
+async def cmd_add_device(message: types.Message):
+    """/add <device_id> [name]"""
+    args = message.text.split(maxsplit=2)
+    if len(args) < 2:
+        await message.answer("Usage: `/add <device_id> [optional_name]`", parse_mode="Markdown")
+        return
+    
+    device_id = args[1]
+    custom_name = args[2] if len(args) > 2 else device_id
+    user_id = message.from_user.id
+    
+    db = SessionLocal()
+    try:
+        # Check if already exists
+        exists = db.query(TelegramBookmark).filter(
+            TelegramBookmark.telegram_id == user_id,
+            TelegramBookmark.device_id == device_id
+        ).first()
+        
+        if exists:
+            await message.answer(f"⚠️ Device `{device_id}` is already in your list!", parse_mode="Markdown")
+            return
+            
+        bookmark = TelegramBookmark(
+            telegram_id=user_id,
+            device_id=device_id,
+            custom_name=custom_name,
+            room="Default"
+        )
+        db.add(bookmark)
+        db.commit()
+        await message.answer(f"✅ Device `{device_id}` added successfully!\nOpen the dashboard to see it.", parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Error adding device: {e}")
+        await message.answer("❌ Failed to add device. Please try again.")
+    finally:
+        db.close()
 
 # Register handlers
 if dp:
     dp.message.register(cmd_start, Command("start"))
+    dp.message.register(cmd_add_device, Command("add"))
 
 async def start_bot():
     """Starts the Telegram bot polling."""

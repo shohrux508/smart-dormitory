@@ -22,10 +22,16 @@ from app.database import get_db, AuthCode, Token, TelegramBookmark
 # КОНФИГУРАЦИЯ
 # ==========================================
 
-CLIENT_ID = "my-smart-home"
-CLIENT_SECRET = "supersecret123"
-ACCESS_TTL = 3600  # 1 час
-REFRESH_TTL = 3600 * 24 * 30  # 30 дней
+# ==========================================
+# КОНФИГУРАЦИЯ
+# ==========================================
+
+from app.config import settings
+
+CLIENT_ID = settings.ALICE_CLIENT_ID
+CLIENT_SECRET = settings.ALICE_CLIENT_SECRET
+ACCESS_TTL = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+REFRESH_TTL = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
 
 router = APIRouter(tags=["Yandex Alice Integration"])
 

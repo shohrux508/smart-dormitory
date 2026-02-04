@@ -6,12 +6,15 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
+import logging
+from app.config import settings
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Импорт основных компонентов
 from app.services.devices import manager, DeviceHello, StateUpdate, Command, Device
-<<<<<<< HEAD
-
-=======
->>>>>>> parent of e478d05 (feat: web ui upgraded)
 
 # Импорт сервиса Алисы
 from app.routers.alice import router as alice_router
@@ -19,21 +22,25 @@ from app.routers.alice import router as alice_router
 # Импорт БД
 # User и DeviceMeta удалены
 from app.database import engine, Base, get_db
-from app.services.telegram_bot import start_bot, stop_bot
+import app.services.telegram_bot as tg_bot
 
 from contextlib import asynccontextmanager
+
+# Создаем таблицы БД (если их нет)
+# Это важно для первого запуска на новом сервере (Deploy)
+Base.metadata.create_all(bind=engine)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Запускаем фоновую задачу heartbeat
     task = asyncio.create_task(manager.run_heartbeat())
     # Запускаем Телеграм бота
-    bot_task = asyncio.create_task(start_bot())
+    bot_task = asyncio.create_task(tg_bot.start_bot())
     
     yield
     
     # При выключении можно отменить задачу, если нужно
-    await stop_bot()
+    await tg_bot.stop_bot()
     task.cancel()
     # bot_task will be cancelled/stopped by stop_bot logic usually, or we can cancel it
     bot_task.cancel()
@@ -42,7 +49,7 @@ app = FastAPI(title="Smart Dormitory Desk Light", lifespan=lifespan)
 
 # Подключаем роутер Алисы (без префикса, так как тесты ожидают /authorize и /v1.0 в корне)
 app.include_router(alice_router)
-@app.get("/")
+@app.get("/status")
 async def root():
     """Проверка работы сервера."""
     return {
@@ -96,26 +103,20 @@ async def websocket_endpoint(websocket: WebSocket):
                 if update_data.type == "state_update" and update_data.device_id == device_id:
                      await manager.update_state(device_id, update_data.state)
                 else:
-                    print(f"Ignored invalid update from {device_id}")
+                    logger.warning(f"Ignored invalid update from {device_id}")
             except Exception as e:
-                print(f"Error processing message from {device_id}: {e}")
+                logger.error(f"Error processing message from {device_id}: {e}")
                 pass # Continue listening
 
     except WebSocketDisconnect:
         if device_id:
             manager.disconnect(device_id)
     except Exception as e:
-        print(f"Unexpected error with {device_id}: {e}")
+        logger.error(f"Unexpected error with {device_id}: {e}")
         if device_id:
              manager.disconnect(device_id)
 
 
-<<<<<<< HEAD
-
-
-
-=======
->>>>>>> parent of e478d05 (feat: web ui upgraded)
 # --- HTTP API (Legacy / Direct Control) ---
 
 @app.get("/api/devices")
@@ -173,8 +174,10 @@ async def update_device_settings(
 
 # --- Debug Catch-All for WebSockets ---
 @app.websocket("/ws/dashboard")
-async def websocket_dashboard(websocket: WebSocket):
-    await manager.connect_client(websocket)
+async def websocket_dashboard(websocket: WebSocket, user_id: Optional[int] = None):
+    # If user_id is provided in query params (e.g. ?user_id=123), use it for filtering
+    # Ideally verify this with a token, but for MVP we trust the query param or Telegram WebApp context
+    await manager.connect_client(websocket, user_id)
     try:
         while True:
             # Keep connection alive, maybe handle ping/pong if needed
@@ -184,13 +187,13 @@ async def websocket_dashboard(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect_client(websocket)
     except Exception as e:
-        print(f"Dashboard client error: {e}")
+        logger.error(f"Dashboard client error: {e}")
         manager.disconnect_client(websocket)
 
 # --- Debug Catch-All for WebSockets ---
 @app.websocket("/{path:path}")
 async def websocket_catchall(websocket: WebSocket, path: str):
-    print(f"⚠️ Caught stray WebSocket connection to path: /{path}")
+    logger.warning(f"⚠️ Caught stray WebSocket connection to path: /{path}")
     await websocket.accept()
     await websocket.send_text("Invalid WebSocket Path. Use /ws or /ws/dashboard")
     await websocket.close(code=1008)
