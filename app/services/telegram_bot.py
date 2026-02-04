@@ -57,8 +57,13 @@ async def cmd_start(message: types.Message):
         return
 
     # Append user_id to URL for personalized dashboard
-    sep = "&" if "?" in WEBAPP_URL else "?"
-    user_url = f"{WEBAPP_URL}{sep}user_id={user.id}"
+    # Используем /dashboard/index.html как точку входа
+    base = WEBAPP_URL.rstrip("/")
+    if not "dashboard" in base:
+        base = f"{base}/dashboard"
+    
+    sep = "&" if "?" in base else "?"
+    user_url = f"{base}{sep}user_id={user.id}"
 
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Open My Dashboard", web_app=WebAppInfo(url=user_url))]

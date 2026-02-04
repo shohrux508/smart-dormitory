@@ -57,6 +57,16 @@ async def root():
         "devices_connected": len(manager.list_devices())
     }
 
+# --- Root Endpoint (Health Check) ---
+# Для проверки работоспособности (Railway Check)
+@app.get("/")
+async def health_check():
+    return {
+        "status": "ok", 
+        "service": "Smart Dormitory API",
+        "doc": "Go to /docs for API documentation or open static/index.html manually if needed."
+    }
+
 # StaticFiles mount moved to end of file to avoid shadowing API routes
 
 
@@ -199,6 +209,6 @@ async def websocket_catchall(websocket: WebSocket, path: str):
     await websocket.close(code=1008)
 
 # --- Static Files (Dashboard) ---
-# Mount static files at the root. 
-# CRITICAL: This must be the LAST route defined to ensure it doesn't shadow API endpoints.
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# --- Static Files (Dashboard) ---
+# Mount static files at /dashboard to avoid conflict with root health check
+app.mount("/dashboard", StaticFiles(directory="static", html=True), name="static")
